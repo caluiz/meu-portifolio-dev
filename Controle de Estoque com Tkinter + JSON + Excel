@@ -1,0 +1,216 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import json
+import os
+from openpyxl import Workbook
+
+ARQUIVO = "estoque.json"
+
+class Aplicacao(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Controle de Estoque")
+        self.geometry("800x580")
+        self.configure(bg="#f0f0f0")
+
+        self.produtos = []
+        self.produto_editando = None  # guarda índice do produto em edição
+        self.carregar_dados()
+
+        self._criar_widgets()
+
+    def _criar_widgets(self):
+        # Frame de cadastro
+        frame_cadastro = tk.LabelFrame(
+            self, text="Cadastro de Produto",
+            padx=10, pady=10, bg="#e6f2ff", fg="black", font=("Arial", 10, "bold")
+        )
+        frame_cadastro.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(frame_cadastro, text="Nome", bg="#e6f2ff").grid(row=0, column=0, sticky="w")
+        self.entry_nome = tk.Entry(frame_cadastro)
+        self.entry_nome.grid(row=0, column=1, padx=5, pady=2)
+
+        tk.Label(frame_cadastro, text="Quantidade", bg="#e6f2ff").grid(row=1, column=0, sticky="w")
+        self.entry_quantidade = tk.Entry(frame_cadastro)
+        self.entry_quantidade.grid(row=1, column=1, padx=5, pady=2)
+
+        tk.Label(frame_cadastro, text="Preço", bg="#e6f2ff").grid(row=2, column=0, sticky="w")
+        self.entry_preco = tk.Entry(frame_cadastro)
+        self.entry_preco.grid(row=2, column=1, padx=5, pady=2)
+
+        btn_adicionar = tk.Button(
+            frame_cadastro, text="➕ Adicionar Produto",
+            command=self.adicionar_produto, bg="#4CAF50", fg="white", font=("Arial", 9, "bold")
+        )
+        btn_adicionar.grid(row=3, column=0, pady=5, sticky="we")
+
+        btn_editar = tk.Button(
+            frame_cadastro, text="✏️ Editar Produto",
+            command=self.editar_produto, bg="#9C27B0", fg="white", font=("Arial", 9, "bold")
+        )
+        btn_editar.grid(row=3, column=1, pady=5, sticky="we")
+
+        # Tabela de produtos
+        self.tree = ttk.Treeview(self, columns=("nome", "quantidade", "preco"), show="headings", height=12)
+        self.tree.heading("nome", text="Nome")
+        self.tree.heading("quantidade", text="Quantidade")
+        self.tree.heading("preco", text="Preço (R$)")
+        self.tree.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Estilo da tabela
+        style = ttk.Style(self)
+        style.configure("Treeview.Heading", font=("Arial", 10, "bold"), foreground="black")
+        style.configure("Treeview", font=("Arial", 9), rowheight=25)
+
+        # Frame de botões
+        frame_botoes = tk.Frame(self, bg="#f0f0f0")
+        frame_botoes.pack(pady=10)
+
+        btn_exportar = tk.Button(
+            frame_botoes, text="📊 Exportar para Excel",
+            command=self.excel, bg="#2196F3", fg="white", font=("Arial", 9, "bold")
+        )
+        btn_exportar.grid(row=0, column=0, padx=10)
+
+        btn_totais = tk.Button(
+            frame_botoes, text="🧾 Mostrar Totais",
+            command=self.mostrar_totais, bg="#FF9800", fg="white", font=("Arial", 9, "bold")
+        )
+        btn_totais.grid(row=0, column=1, padx=10)
+
+        btn_remover = tk.Button(
+            frame_botoes, text="❌ Remover Selecionado",
+            command=self.remover_produto, bg="#E91E63", fg="white", font=("Arial", 9, "bold")
+        )
+        btn_remover.grid(row=0, column=2, padx=10)
+
+        btn_limpar = tk.Button(
+            frame_botoes, text="🗑️ Limpar Tudo",
+            command=self.limpar_tudo, bg="#F44336", fg="white", font=("Arial", 9, "bold")
+        )
+        btn_limpar.grid(row=0, column=3, padx=10)
+
+        self.atualizar_tabela()
+
+    def adicionar_produto(self):
+        nome = self.entry_nome.get().strip()
+        qtd = self.entry_quantidade.get().strip()
+        preco = self.entry_preco.get().strip()
+
+        if not nome or not qtd or not preco:
+            messagebox.showwarning("Aviso", "Preencha todos os campos!!!")
+            return
+
+        try:
+            qtd = int(qtd)
+            preco = float(preco)
+        except ValueError:
+            messagebox.showwarning("Erro", "Quantidade deve ser número inteiro e preço deve ser número real")
+            return
+
+        if self.produto_editando is not None:
+            # Se estamos editando, atualiza o produto
+            self.produtos[self.produto_editando] = {"nome": nome, "quantidade": qtd, "preco": preco}
+            self.produto_editando = None
+            messagebox.showinfo("Sucesso", "Produto atualizado com sucesso!")
+        else:
+            # Senão, adiciona novo
+            self.produtos.append({"nome": nome, "quantidade": qtd, "preco": preco})
+
+        self.salvar_dados()
+        self.atualizar_tabela()
+        self.limpar_campos()
+
+    def editar_produto(self):
+        selecionado = self.tree.selection()
+        if not selecionado:
+            messagebox.showwarning("Aviso", "Selecione um produto para editar.")
+            return
+
+        item = self.tree.item(selecionado)
+        valores = item["values"]
+
+        # Preenche os campos com valores do item selecionado
+        self.entry_nome.delete(0, tk.END)
+        self.entry_nome.insert(0, valores[0])
+
+        self.entry_quantidade.delete(0, tk.END)
+        self.entry_quantidade.insert(0, valores[1])
+
+        self.entry_preco.delete(0, tk.END)
+        self.entry_preco.insert(0, valores[2])
+
+        # Descobre índice do produto na lista
+        self.produto_editando = self.tree.index(selecionado)
+
+    def remover_produto(self):
+        selecionado = self.tree.selection()
+        if not selecionado:
+            messagebox.showwarning("Aviso", "Selecione um produto para remover.")
+            return
+
+        indice = self.tree.index(selecionado)
+        produto = self.produtos[indice]
+
+        if messagebox.askyesno("Confirmação", f"Remover o produto '{produto['nome']}'?"):
+            del self.produtos[indice]
+            self.salvar_dados()
+            self.atualizar_tabela()
+
+    def atualizar_tabela(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for p in self.produtos:
+            self.tree.insert("", tk.END, values=(p["nome"], p["quantidade"], f"{p['preco']:.2f}"))
+
+    def salvar_dados(self):
+        with open(ARQUIVO, "w", encoding="utf-8") as f:
+            json.dump(self.produtos, f, indent=4, ensure_ascii=False)
+
+    def carregar_dados(self):
+        if os.path.exists(ARQUIVO):
+            with open(ARQUIVO, "r", encoding="utf-8") as f:
+                self.produtos = json.load(f)
+
+    def excel(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Estoque"
+
+        ws.append(["Nome", "Quantidade", "Preço (R$)"])
+        for p in self.produtos:
+            ws.append([p["nome"], p["quantidade"], p["preco"]])
+
+        wb.save("estoque.xlsx")
+        messagebox.showinfo("Sucesso", "Estoque exportado para 'estoque.xlsx'")
+
+    def mostrar_totais(self):
+        if not self.produtos:
+            messagebox.showinfo("Totais", "Nenhum produto cadastrado.")
+            return
+
+        total_qtd = sum(p["quantidade"] for p in self.produtos)
+        total_valor = sum(p["quantidade"] * p["preco"] for p in self.produtos)
+
+        messagebox.showinfo(
+            "Totais do Estoque",
+            f"📦 Quantidade total: {total_qtd}\n💰 Valor total: R$ {total_valor:.2f}"
+        )
+
+    def limpar_tudo(self):
+        if messagebox.askyesno("Confirmação", "Tem certeza que deseja apagar todo o estoque?"):
+            self.produtos.clear()
+            if os.path.exists(ARQUIVO):
+                os.remove(ARQUIVO)
+            self.atualizar_tabela()
+            messagebox.showinfo("Sucesso", "Todo o estoque foi apagado!")
+
+    def limpar_campos(self):
+        self.entry_nome.delete(0, tk.END)
+        self.entry_quantidade.delete(0, tk.END)
+        self.entry_preco.delete(0, tk.END)
+
+if __name__ == "__main__":
+    estoque = Aplicacao()
+    estoque.mainloop()
