@@ -1,0 +1,245 @@
+import tkinter as tk
+from tkinter import messagebox, simpledialog, ttk
+from datetime import datetime
+from typing import List, Optional
+import json
+import os
+
+# ---------------- Modelo Tarefa ----------------
+class Tarefa:
+    def __init__(self, id_: int, titulo: str, descricao: str = "", concluida: bool = False, data_criacao: str = ""):
+        self.id = id_
+        self.titulo = titulo.strip()
+        self.descricao = descricao.strip()
+        self.concluida = concluida
+        self.data_criacao = data_criacao or datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+    def para_dict(self):
+        return {
+            "id": self.id,
+            "titulo": self.titulo,
+            "descricao": self.descricao,
+            "concluida": self.concluida,
+            "data_criacao": self.data_criacao
+        }
+
+    @staticmethod
+    def de_dict(d):
+        return Tarefa(
+            id=int(d.get("id", 0)),
+            titulo=str(d.get("titulo", "")),
+            descricao=str(d.get("descricao", "")),
+            concluida=bool(d.get("concluida", False)),
+            data_criacao=str(d.get("data_criacao", ""))
+        )
+
+# ---------------- Funções de Persistência ----------------
+ARQUIVO = "tarefas.json"
+
+def carregar() -> List[Tarefa]:
+    if not os.path.exists(ARQUIVO):
+        return []
+    try:
+        with open(ARQUIVO, "r", encoding="utf-8") as f:
+            dados = json.load(f)
+        return [Tarefa.de_dict(item) for item in dados]
+    except Exception:
+        return []
+
+def salvar(tarefas: List[Tarefa]):
+    dados = [t.para_dict() for t in tarefas]
+    with open(ARQUIVO, "w", encoding="utf-8") as f:
+        json.dump(dados, f, ensure_ascii=False, indent=2)
+
+def proximo_id(tarefas: List[Tarefa]) -> int:
+    if not tarefas:
+        return 1
+    return max(t.id for t in tarefas) + 1
+
+# ---------------- Aplicação Tkinter ----------------
+class Aplicacao(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Gerenciador de Tarefas")
+        self.geometry("640x480")
+        self.minsize(560, 420)
+
+        self.tarefas: List[Tarefa] = carregar()
+        self.filtro_var = tk.StringVar(value="todas")
+
+        self._criar_widgets()
+        self._popular_lista()
+        self.lista.bind("<Double-1>", lambda e: self.editar_tarefa())
+        self.protocol("WM_DELETE_WINDOW", self._sair_com_salvamento)
+
+    # ---------- UI ----------
+    def _criar_widgets(self):
+        topo = ttk.Frame(self, padding=8)
+        topo.pack(fill="x")
+
+        ttk.Label(topo, text="Título da tarefa:").pack(side="left")
+        self.entrada_titulo = ttk.Entry(topo)
+        self.entrada_titulo.pack(side="left", fill="x", expand=True, padx=8)
+        ttk.Button(topo, text="Adicionar", command=self.adicionar_tarefa).pack(side="left")
+
+        centro = ttk.Frame(self, padding=(8,0,8,8))
+        centro.pack(fill="both", expand=True)
+
+        esquerdo = ttk.Frame(centro)
+        esquerdo.pack(side="left", fill="both", expand=True)
+
+        barra_filtro = ttk.Frame(esquerdo)
+        barra_filtro.pack(fill="x", pady=(0,6))
+        ttk.Label(barra_filtro, text="Mostrar: ").pack(side="left")
+        for txt, val in [("Todas", "todas"), ("Pendentes", "pendentes"), ("Concluídas", "concluidas")]:
+            ttk.Radiobutton(barra_filtro, text=txt, value=val, variable=self.filtro_var, command=self._popular_lista).pack(side="left")
+
+        frame_lista = ttk.Frame(esquerdo)
+        frame_lista.pack(fill="both", expand=True)
+        self.lista = tk.Listbox(frame_lista, activestyle="dotbox")
+        barra = ttk.Scrollbar(frame_lista, orient="vertical", command=self.lista.yview)
+        self.lista.configure(yscrollcommand=barra.set)
+        self.lista.pack(side="left", fill="both", expand=True)
+        barra.pack(side="right", fill="y")
+
+        direito = ttk.Frame(centro, width=250)
+        direito.pack(side="left", fill="both")
+        ttk.Label(direito, text="Descrição da tarefa selecionada:").pack(anchor="w")
+        self.texto_descricao = tk.Text(direito, height=10, wrap="word")
+        self.texto_descricao.pack(fill="both", expand=True, pady=(4,0))
+        self.texto_descricao.configure(state="disabled")
+
+        botoes = ttk.Frame(self, padding=8)
+        botoes.pack(fill="x")
+        ttk.Button(botoes, text="Marcar/Desmarcar Concluída", command=self.alternar_conclusao).pack(side="left")
+        ttk.Button(botoes, text="Editar", command=self.editar_tarefa).pack(side="left", padx=6)
+        ttk.Button(botoes, text="Remover", command=self.remover_tarefa).pack(side="left")
+        ttk.Button(botoes, text="Remover Concluídas", command=self.remover_concluidas).pack(side="left", padx=6)
+        ttk.Button(botoes, text="Limpar Tudo", command=self.limpar_tudo).pack(side="left")
+
+        self.lista.bind("<<ListboxSelect>>", lambda e: self._mostrar_descricao())
+
+    # ---------- Lógica ----------
+    def _tarefas_filtradas(self):
+        if self.filtro_var.get() == "pendentes":
+            return [t for t in self.tarefas if not t.concluida]
+        if self.filtro_var.get() == "concluidas":
+            return [t for t in self.tarefas if t.concluida]
+        return self.tarefas
+
+    def _rotulo_tarefa(self, t:Tarefa):
+        return f"{'✅' if t.concluida else '⏳'} {t.titulo}  (#{t.id})"
+
+    def _popular_lista(self):
+        self.lista.delete(0, tk.END)
+        for t in self._tarefas_filtradas():
+            self.lista.insert(tk.END, self._rotulo_tarefa(t))
+        self._mostrar_descricao()
+
+    def _mostrar_descricao(self):
+        self.texto_descricao.configure(state="normal")
+        self.texto_descricao.delete("1.0", tk.END)
+        t = self._tarefa_selecionada()
+        if t:
+            self.texto_descricao.insert("1.0", t.descricao or "(sem descrição)")
+        self.texto_descricao.configure(state="disabled")
+
+    def _tarefa_selecionada(self) -> Optional[Tarefa]:
+        idx = self.lista.curselection()
+        if not idx:
+            return None
+        filtradas = self._tarefas_filtradas()
+        try:
+            return filtradas[idx[0]]
+        except IndexError:
+            return None
+
+    def adicionar_tarefa(self):
+        titulo = self.entrada_titulo.get().strip()
+        if not titulo:
+            messagebox.showinfo("Atenção", "Digite um título para a tarefa.")
+            return
+        descricao = simpledialog.askstring("Descrição", "Descrição (opcional):", parent=self) or ""
+        nova = Tarefa(proximo_id(self.tarefas), titulo, descricao)
+        self.tarefas.append(nova)
+        salvar(self.tarefas)
+        self.entrada_titulo.delete(0, tk.END)
+        self._popular_lista()
+
+    def alternar_conclusao(self):
+        t = self._tarefa_selecionada()
+        if not t:
+            messagebox.showinfo("Atenção", "Selecione uma tarefa para marcar/desmarcar.")
+            return
+        t.concluida = not t.concluida
+        salvar(self.tarefas)
+        self._popular_lista()
+
+    def editar_tarefa(self):
+        t = self._tarefa_selecionada()
+        if not t:
+            messagebox.showinfo("Atenção", "Selecione uma tarefa para editar.")
+            return
+        janela = tk.Toplevel(self)
+        janela.title(f"Editar tarefa #{t.id}")
+        janela.transient(self)
+        janela.grab_set()
+        ttk.Label(janela, text="Título:").pack(anchor="w", padx=8, pady=(8,0))
+        entrada_titulo = ttk.Entry(janela)
+        entrada_titulo.insert(0, t.titulo)
+        entrada_titulo.pack(fill="x", padx=8)
+        ttk.Label(janela, text="Descrição:").pack(anchor="w", padx=8, pady=(8,0))
+        texto_desc = tk.Text(janela, height=8, wrap="word")
+        texto_desc.pack(fill="both", expand=True, padx=8, pady=(0,8))
+        texto_desc.insert("1.0", t.descricao)
+        def confirmar():
+            nt = entrada_titulo.get().strip()
+            if not nt:
+                messagebox.showinfo("Atenção", "O título não pode ficar vazio.")
+                return
+            t.titulo = nt
+            t.descricao = texto_desc.get("1.0","end").strip()
+            salvar(self.tarefas)
+            self._popular_lista()
+            janela.destroy()
+        ttk.Button(janela, text="Salvar", command=confirmar).pack(side="left", padx=4)
+        ttk.Button(janela, text="Cancelar", command=janela.destroy).pack(side="left")
+
+    def remover_tarefa(self):
+        t = self._tarefa_selecionada()
+        if not t:
+            messagebox.showinfo("Atenção", "Selecione uma tarefa para remover.")
+            return
+        if messagebox.askyesno("Confirmar", f"Remover a tarefa #{t.id}?"):
+            self.tarefas = [x for x in self.tarefas if x.id != t.id]
+            salvar(self.tarefas)
+            self._popular_lista()
+
+    def remover_concluidas(self):
+        concluidas = [x for x in self.tarefas if x.concluida]
+        if not concluidas:
+            messagebox.showinfo("Info", "Não há tarefas concluídas para remover.")
+            return
+        if messagebox.askyesno("Confirmar", f"Remover {len(concluidas)} concluída(s)?"):
+            self.tarefas = [x for x in self.tarefas if not x.concluida]
+            salvar(self.tarefas)
+            self._popular_lista()
+
+    def limpar_tudo(self):
+        if not self.tarefas:
+            messagebox.showinfo("Info", "A lista já está vazia.")
+            return
+        if messagebox.askyesno("Confirmar", "Tem certeza que deseja remover TODAS as tarefas?"):
+            self.tarefas = []
+            salvar(self.tarefas)
+            self._popular_lista()
+
+    def _sair_com_salvamento(self):
+        try:
+            salvar(self.tarefas)
+        finally:
+            self.destroy()
+
+if __name__ == "__main__":
+    gerenciador_de_tarefas = Aplicacao()
+    gerenciador_de_tarefas.mainloop()
